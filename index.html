@@ -259,7 +259,11 @@
         <div class="val" id="ddTotal">€ 0,00</div>
         <div class="reg-breakdown" id="ddBreakdown"></div>
       </div>
-      <div class="section-head"><h2 class="section-title" style="margin:0;">Provvisori</h2><span class="pill pill-temp" id="ddTempCount">0</span></div>
+      <div class="section-head" style="margin-top:6px;"><h2 class="section-title" style="margin:0;">Aggiungi prelievo a questo giorno</h2></div>
+      <div id="ddNoteRows"></div>
+      <div class="bottom-total" style="margin-top:10px;"><span class="lbl">Totale da aggiungere</span><span class="val" id="ddAddTotal" style="font-size:20px;">€ 0,00</span></div>
+      <button class="btn-primary" id="ddAddBtn" disabled>Aggiungi prelievo</button>
+      <div class="section-head" style="margin-top:18px;"><h2 class="section-title" style="margin:0;">Provvisori</h2><span class="pill pill-temp" id="ddTempCount">0</span></div>
       <div id="ddTempList"></div>
       <button class="btn-primary" id="ddFinalizeBtn" style="margin-top:10px;" disabled>Registra tutto in modo definitivo</button>
       <div class="section-head" style="margin-top:16px;"><h2 class="section-title" style="margin:0;">Definitivi</h2><span class="pill pill-final" id="ddFinalCount">0</span></div>
@@ -734,6 +738,65 @@
   var ddExpectedInput = document.getElementById("ddExpectedInput");
   var ddDeltaBox = document.getElementById("ddDeltaBox");
 
+  var ddCounts = {};
+  DENOMS.forEach(function (d) { ddCounts[d.v] = 0; });
+  var ddNoteRowsEl = document.getElementById("ddNoteRows");
+  DENOMS.forEach(function (d) {
+    var row = document.createElement("div");
+    row.className = "note-row";
+    row.innerHTML =
+      '<div class="note-chip" style="background:' + d.color + '">€' + d.v + '</div>' +
+      '<div class="note-label">banconote da €' + d.v + '</div>' +
+      '<div class="stepper">' +
+        '<button type="button" data-act="minus" data-v="' + d.v + '">−</button>' +
+        '<span class="count" id="ddCount-' + d.v + '">0</span>' +
+        '<button type="button" data-act="plus" data-v="' + d.v + '">+</button>' +
+      '</div>' +
+      '<div class="note-sub" id="ddSub-' + d.v + '">€ 0</div>';
+    ddNoteRowsEl.appendChild(row);
+  });
+  var ddAddTotalEl = document.getElementById("ddAddTotal");
+  var ddAddBtn = document.getElementById("ddAddBtn");
+  function ddCurrentTotal() {
+    var t = 0;
+    DENOMS.forEach(function (d) { t += ddCounts[d.v] * d.v; });
+    return t;
+  }
+  function updateDdAddTotal() {
+    var t = ddCurrentTotal();
+    ddAddTotalEl.textContent = fmtCompact(t);
+    ddAddBtn.disabled = t <= 0;
+  }
+  function resetDdCounter() {
+    DENOMS.forEach(function (d) {
+      ddCounts[d.v] = 0;
+      document.getElementById("ddCount-" + d.v).textContent = "0";
+      document.getElementById("ddSub-" + d.v).textContent = fmtCompact(0);
+    });
+    updateDdAddTotal();
+  }
+  ddNoteRowsEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    var v = parseInt(btn.dataset.v, 10);
+    if (btn.dataset.act === "plus") ddCounts[v]++; else ddCounts[v] = Math.max(0, ddCounts[v] - 1);
+    document.getElementById("ddCount-" + v).textContent = ddCounts[v];
+    document.getElementById("ddSub-" + v).textContent = fmtCompact(ddCounts[v] * v);
+    updateDdAddTotal();
+  });
+  ddAddBtn.addEventListener("click", async function () {
+    var t = ddCurrentTotal();
+    if (t <= 0) return;
+    ddAddBtn.disabled = true;
+    var denomBreakdown = {};
+    DENOMS.forEach(function (d) { if (ddCounts[d.v] > 0) denomBreakdown[d.v] = ddCounts[d.v]; });
+    var entry = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7), time: timeKey(new Date()), denoms: denomBreakdown, total: t, status: "temp" };
+    dayDetailData.entries = (dayDetailData.entries || []).concat([entry]);
+    var ok = await ddPersist();
+    if (ok) { resetDdCounter(); showToast("Prelievo aggiunto — " + fmtCompact(t)); }
+    updateDdAddTotal();
+  });
+
   var GIORNI = ["Domenica","Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato"];
   function formatDayTitle(key) {
     var parts = key.split("-").map(Number);
@@ -744,6 +807,7 @@
   async function openDayDetail(key) {
     dayDetailKey = key;
     ddTitle.textContent = formatDayTitle(key);
+    resetDdCounter();
     var map = await fetchRange(key, key);
     dayDetailData = map[key] || { entries: [], expected: null };
     if (!dayDetailData.entries) dayDetailData.entries = [];
