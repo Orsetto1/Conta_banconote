@@ -137,6 +137,31 @@
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   h2.section-title { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); margin: 4px 0 8px; }
   .note-small { font-size: 11.5px; color: var(--ink-soft); margin-top: 8px; line-height: 1.5; }
+  .hist-row.clickable { cursor: pointer; }
+  .hist-row.clickable:active { background: var(--surface-2); }
+  .modal-backdrop {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 30;
+    padding: 20px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+    align-items: flex-end;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-card {
+    background: var(--surface);
+    border-radius: 18px 18px 14px 14px;
+    padding: 16px;
+    max-width: 560px;
+    width: 100%;
+    margin: 0 auto;
+    max-height: 85vh;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+  }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .modal-title { font-weight: 800; font-size: 15.5px; }
+  .modal-close { border: none; background: var(--surface-2); color: var(--ink-soft); width: 30px; height: 30px; border-radius: 9px; font-size: 14px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -208,7 +233,10 @@
         <div class="box"><div class="lbl">Differenza</div><div class="val" id="sumDelta">€0</div></div>
       </div>
     </div>
-    <div class="card" id="histCard"><div id="histList"></div></div>
+    <div class="card" id="histCard">
+      <div class="note-small" id="histHint">Tocca un giorno per correggerne i prelievi.</div>
+      <div id="histList"></div>
+    </div>
     <div class="card">
       <h2 class="section-title">Dati</h2>
       <div class="row-flex">
@@ -219,6 +247,30 @@
       <div class="note-small" id="syncNote"></div>
     </div>
   </section>
+
+  <div class="modal-backdrop" id="dayModalBackdrop">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title" id="ddTitle">Giorno</div>
+        <button class="modal-close" id="ddClose">✕</button>
+      </div>
+      <div class="register" style="padding-top:6px;">
+        <div class="lbl">Totale contato</div>
+        <div class="val" id="ddTotal">€ 0,00</div>
+        <div class="reg-breakdown" id="ddBreakdown"></div>
+      </div>
+      <div class="section-head"><h2 class="section-title" style="margin:0;">Provvisori</h2><span class="pill pill-temp" id="ddTempCount">0</span></div>
+      <div id="ddTempList"></div>
+      <button class="btn-primary" id="ddFinalizeBtn" style="margin-top:10px;" disabled>Registra tutto in modo definitivo</button>
+      <div class="section-head" style="margin-top:16px;"><h2 class="section-title" style="margin:0;">Definitivi</h2><span class="pill pill-final" id="ddFinalCount">0</span></div>
+      <div id="ddFinalList"></div>
+      <div class="expected-row" style="margin-top:14px;">
+        <label for="ddExpectedInput">Incasso atteso</label>
+        <input type="number" id="ddExpectedInput" inputmode="decimal" placeholder="0,00">
+      </div>
+      <div id="ddDeltaBox"></div>
+    </div>
+  </div>
 
 </main>
 
@@ -279,10 +331,10 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); return true; } catch (e) { return false; }
   }
 
-  async function writeToday(entries, expected) {
+  async function writeDay(key, entries, expected) {
     if (dbApi) {
       try {
-        await dbApi.collection("days").doc(todayKey()).set({ date: todayKey(), entries: entries, expected: expected });
+        await dbApi.collection("days").doc(key).set({ date: key, entries: entries, expected: expected });
         return true;
       } catch (e) {
         console.error("db write error", e);
@@ -291,12 +343,17 @@
       }
     } else {
       var all = localLoadAll();
-      all[todayKey()] = { date: todayKey(), entries: entries, expected: expected };
+      all[key] = { date: key, entries: entries, expected: expected };
       var ok = localSaveAll(all);
-      todayCache = all[todayKey()];
-      renderOggiFromCache();
+      if (key === todayKey()) {
+        todayCache = all[key];
+        renderOggiFromCache();
+      }
       return ok;
     }
+  }
+  function writeToday(entries, expected) {
+    return writeDay(todayKey(), entries, expected);
   }
 
   async function fetchRange(startKey, endKey) {
@@ -565,6 +622,9 @@
   var MESI_LONG = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
 
   async function renderStorico() {
+    document.getElementById("histHint").textContent = granularity === "year"
+      ? ""
+      : "Tocca un giorno per correggerne i prelievi.";
     var now = new Date();
     var periodLabel = document.getElementById("periodLabel");
     var histList = document.getElementById("histList");
@@ -584,7 +644,7 @@
         var exp = dayObj && dayObj.expected != null ? dayObj.expected : null;
         sumCounted += c;
         if (exp != null) { sumExpected += exp; anyExpected = true; }
-        rows.push({ label: ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"][i] + " " + d.getDate(), counted: c, expected: exp });
+        rows.push({ label: ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"][i] + " " + d.getDate(), counted: c, expected: exp, key: key });
       }
     } else if (granularity === "month") {
       var m = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), periodOffset);
@@ -603,7 +663,7 @@
         var expm = daym.expected != null ? daym.expected : null;
         sumCounted += cm;
         if (expm != null) { sumExpected += expm; anyExpected = true; }
-        rows.push({ label: dd + " " + MESI[dm.getMonth()], counted: cm, expected: expm });
+        rows.push({ label: dd + " " + MESI[dm.getMonth()], counted: cm, expected: expm, key: keym });
       }
     } else {
       var y = now.getFullYear() + periodOffset;
@@ -640,7 +700,8 @@
     var maxVal = Math.max.apply(null, rows.map(function (r) { return Math.max(r.counted, r.expected || 0); })) || 1;
     rows.forEach(function (r) {
       var el = document.createElement("div");
-      el.className = "hist-row";
+      el.className = "hist-row" + (r.key ? " clickable" : "");
+      if (r.key) el.dataset.date = r.key;
       var expLine = r.expected != null
         ? '<div class="bar-track"><div class="bar-fill expected" style="width:' + (r.expected / maxVal * 100) + '%"></div></div>'
         : "";
@@ -650,6 +711,106 @@
       histList.appendChild(el);
     });
   }
+  document.getElementById("histList").addEventListener("click", function (e) {
+    var row = e.target.closest(".hist-row[data-date]");
+    if (row) openDayDetail(row.dataset.date);
+  });
+
+  // ---------- day detail (correzioni su giorni passati) ----------
+  var dayDetailKey = null;
+  var dayDetailData = { entries: [], expected: null };
+  var ddModal = document.getElementById("dayModalBackdrop");
+  var ddTitle = document.getElementById("ddTitle");
+  var ddTotal = document.getElementById("ddTotal");
+  var ddBreakdown = document.getElementById("ddBreakdown");
+  var ddTempList = document.getElementById("ddTempList");
+  var ddFinalList = document.getElementById("ddFinalList");
+  var ddTempCount = document.getElementById("ddTempCount");
+  var ddFinalCount = document.getElementById("ddFinalCount");
+  var ddFinalizeBtn = document.getElementById("ddFinalizeBtn");
+  var ddExpectedInput = document.getElementById("ddExpectedInput");
+  var ddDeltaBox = document.getElementById("ddDeltaBox");
+
+  var GIORNI = ["Domenica","Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato"];
+  function formatDayTitle(key) {
+    var parts = key.split("-").map(Number);
+    var d = new Date(parts[0], parts[1] - 1, parts[2]);
+    return GIORNI[d.getDay()] + " " + d.getDate() + " " + MESI[d.getMonth()] + " " + d.getFullYear();
+  }
+
+  async function openDayDetail(key) {
+    dayDetailKey = key;
+    ddTitle.textContent = formatDayTitle(key);
+    var map = await fetchRange(key, key);
+    dayDetailData = map[key] || { entries: [], expected: null };
+    if (!dayDetailData.entries) dayDetailData.entries = [];
+    renderDayDetail();
+    ddModal.classList.add("show");
+  }
+  function closeDayDetail() {
+    ddModal.classList.remove("show");
+    dayDetailKey = null;
+  }
+  document.getElementById("ddClose").addEventListener("click", closeDayDetail);
+  ddModal.addEventListener("click", function (e) { if (e.target === ddModal) closeDayDetail(); });
+
+  function renderDayDetail() {
+    var entries = dayDetailData.entries || [];
+    var tempEntries = entries.filter(function (e) { return e.status !== "final"; });
+    var finalEntries = entries.filter(function (e) { return e.status === "final"; });
+    var tempTotal = tempEntries.reduce(function (s, e) { return s + e.total; }, 0);
+    var finalTotal = finalEntries.reduce(function (s, e) { return s + e.total; }, 0);
+    var total = tempTotal + finalTotal;
+
+    ddTotal.textContent = fmtCompact(total);
+    ddBreakdown.textContent = entries.length ? ("provvisorio " + fmtCompact(tempTotal) + " · definitivo " + fmtCompact(finalTotal)) : "";
+    ddTempCount.textContent = tempEntries.length;
+    ddFinalCount.textContent = finalEntries.length;
+    ddFinalizeBtn.disabled = tempEntries.length === 0;
+
+    renderList(ddTempList, tempEntries, "Nessun prelievo provvisorio.", false);
+    renderList(ddFinalList, finalEntries, "Nessun prelievo definitivo.", true);
+
+    if (document.activeElement !== ddExpectedInput) {
+      ddExpectedInput.value = dayDetailData.expected != null ? dayDetailData.expected : "";
+    }
+    if (dayDetailData.expected == null || isNaN(dayDetailData.expected)) {
+      ddDeltaBox.innerHTML = "";
+    } else {
+      var delta = total - dayDetailData.expected;
+      var cls = Math.abs(delta) < 0.01 ? "ok" : (delta < 0 ? "bad" : "ok");
+      var text = Math.abs(delta) < 0.01 ? "Corrisponde all'incasso atteso" : (delta < 0 ? "Mancano" : "In più di");
+      ddDeltaBox.innerHTML = '<div class="delta-line ' + cls + '"><span>' + text + '</span><span class="val">' + fmtCompact(Math.abs(delta)) + '</span></div>';
+    }
+  }
+
+  async function ddPersist() {
+    var ok = await writeDay(dayDetailKey, dayDetailData.entries, dayDetailData.expected);
+    if (ok) { renderDayDetail(); renderStorico(); }
+    return ok;
+  }
+
+  function ddDeleteHandler(e) {
+    var btn = e.target.closest("button[data-id]");
+    if (!btn) return;
+    dayDetailData.entries = (dayDetailData.entries || []).filter(function (en) { return en.id !== btn.dataset.id; });
+    ddPersist().then(function (ok) { if (ok) showToast("Prelievo eliminato"); });
+  }
+  ddTempList.addEventListener("click", ddDeleteHandler);
+  ddFinalList.addEventListener("click", ddDeleteHandler);
+
+  ddFinalizeBtn.addEventListener("click", function () {
+    dayDetailData.entries = (dayDetailData.entries || []).map(function (e) {
+      return e.status === "final" ? e : Object.assign({}, e, { status: "final" });
+    });
+    ddPersist().then(function (ok) { if (ok) showToast("Prelievi registrati in modo definitivo"); });
+  });
+
+  ddExpectedInput.addEventListener("change", function () {
+    var val = parseFloat(ddExpectedInput.value);
+    dayDetailData.expected = isNaN(val) ? null : val;
+    ddPersist();
+  });
 
   // ---------- backup ----------
   document.getElementById("exportBtn").addEventListener("click", async function () {
