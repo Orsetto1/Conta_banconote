@@ -581,7 +581,10 @@
       return e.status === "final" ? e : Object.assign({}, e, { status: "final" });
     });
     var ok = await writeToday(newEntries, todayCache.expected != null ? todayCache.expected : null);
-    if (ok) showToast("Prelievi registrati in modo definitivo");
+    if (ok) {
+      var didBackup = await exportBackup(true);
+      showToast(didBackup ? "Prelievi registrati definitivamente — backup salvato" : "Prelievi registrati definitivamente");
+    }
     updatePrelievoTotal();
   });
 
@@ -803,7 +806,12 @@
     dayDetailData.entries = (dayDetailData.entries || []).map(function (e) {
       return e.status === "final" ? e : Object.assign({}, e, { status: "final" });
     });
-    ddPersist().then(function (ok) { if (ok) showToast("Prelievi registrati in modo definitivo"); });
+    ddPersist().then(async function (ok) {
+      if (ok) {
+        var didBackup = await exportBackup(true);
+        showToast(didBackup ? "Prelievi registrati definitivamente — backup salvato" : "Prelievi registrati definitivamente");
+      }
+    });
   });
 
   ddExpectedInput.addEventListener("change", function () {
@@ -813,15 +821,21 @@
   });
 
   // ---------- backup ----------
-  document.getElementById("exportBtn").addEventListener("click", async function () {
+  var AUTO_BACKUP_KEY = "orsetto_conta_banconote_last_autobackup";
+  async function exportBackup(auto) {
+    if (auto) {
+      try {
+        if (localStorage.getItem(AUTO_BACKUP_KEY) === todayKey()) return false;
+      } catch (e) {}
+    }
     var days = {};
     if (dbApi) {
       try {
         var snap = await dbApi.collection("days").orderBy("date").limit(1000).get();
         snap.docs.forEach(function (d) { days[d.id] = d.data(); });
       } catch (e) {
-        showToast("Errore nell'esportazione");
-        return;
+        if (!auto) showToast("Errore nell'esportazione");
+        return false;
       }
     } else {
       days = localLoadAll();
@@ -835,8 +849,11 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast("Backup esportato");
-  });
+    if (auto) { try { localStorage.setItem(AUTO_BACKUP_KEY, todayKey()); } catch (e) {} }
+    if (!auto) showToast("Backup esportato");
+    return true;
+  }
+  document.getElementById("exportBtn").addEventListener("click", function () { exportBackup(false); });
 
   var importFile = document.getElementById("importFile");
   document.getElementById("importBtn").addEventListener("click", function () { importFile.click(); });
