@@ -98,6 +98,13 @@
   .pill-temp { background: var(--amber-soft); color: var(--amber); }
   .pill-final { background: var(--ok-soft); color: var(--ok); }
   .withdrawal.is-final .amount { color: var(--ok); }
+  .pill-refill { background: var(--accent-soft); color: var(--accent); }
+  .refill-total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--ink-soft); }
+  .refill-total .val { font-family: var(--font-num); font-size: 17px; font-weight: 700; color: var(--ink); }
+  .refill-tag { font-family: var(--font-ui); font-size: 11px; font-weight: 600; color: var(--accent); margin-left: 6px; }
+  .refill-add { display: flex; gap: 8px; margin-top: 10px; }
+  .refill-add input { flex: 1; min-width: 0; font-family: var(--font-num); font-size: 15px; padding: 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); text-align: right; }
+  .refill-add button:disabled { opacity: 0.45; }
   .withdrawal { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); gap: 10px; }
   .withdrawal:last-child { border-bottom: none; }
   .withdrawal .time { font-family: var(--font-num); font-size: 13px; color: var(--ink-soft); width: 46px; }
@@ -183,6 +190,17 @@
 
   <section class="view active" id="view-prelievo">
     <div class="card" id="noteRows"></div>
+    <div class="card">
+      <div class="section-head">
+        <h2 class="section-title" style="margin:0;">Rabbocco moneta</h2>
+        <span class="pill pill-refill" id="refillTodayPill">oggi 0,00 €</span>
+      </div>
+      <div class="note-small" style="margin-top:0;">Scrivi l'importo totale delle monete inserite in cassa. Più rabbocchi nello stesso giorno si sommano.</div>
+      <div class="refill-add">
+        <input type="text" id="refillInput" inputmode="decimal" autocomplete="off" placeholder="Importo € (es. 50)">
+        <button class="btn-secondary" id="refillAddBtn" disabled>Registra</button>
+      </div>
+    </div>
   </section>
 
   <section class="view" id="view-oggi">
@@ -205,6 +223,14 @@
         <span class="pill pill-final" id="finalCount">0</span>
       </div>
       <div id="withdrawalsFinalList"></div>
+    </div>
+    <div class="card">
+      <div class="section-head">
+        <h2 class="section-title" style="margin:0;">Rabbocchi moneta di oggi</h2>
+        <span class="pill pill-refill" id="refillCount">0</span>
+      </div>
+      <div id="refillList"></div>
+      <div class="refill-total"><span>Totale rabbocchi oggi</span><span class="val" id="refillTotal">0,00 €</span></div>
     </div>
     <div class="card">
       <div class="expected-row">
@@ -232,6 +258,7 @@
         <div class="box"><div class="lbl">Atteso</div><div class="val" id="sumExpected">€0</div></div>
         <div class="box"><div class="lbl">Differenza</div><div class="val" id="sumDelta">€0</div></div>
       </div>
+      <div class="refill-total" id="sumRefillLine" style="display:none;"><span>Rabbocchi moneta nel periodo</span><span class="val" id="sumRefill">0,00 €</span></div>
     </div>
     <div class="card" id="histCard">
       <div class="note-small" id="histHint">Tocca un giorno per correggerne i prelievi.</div>
@@ -268,6 +295,13 @@
       <button class="btn-primary" id="ddFinalizeBtn" style="margin-top:10px;" disabled>Registra tutto in modo definitivo</button>
       <div class="section-head" style="margin-top:16px;"><h2 class="section-title" style="margin:0;">Definitivi</h2><span class="pill pill-final" id="ddFinalCount">0</span></div>
       <div id="ddFinalList"></div>
+      <div class="section-head" style="margin-top:16px;"><h2 class="section-title" style="margin:0;">Rabbocchi moneta</h2><span class="pill pill-refill" id="ddRefillCount">0</span></div>
+      <div id="ddRefillList"></div>
+      <div class="refill-add">
+        <input type="text" id="ddRefillInput" inputmode="decimal" autocomplete="off" placeholder="Importo € (es. 50)">
+        <button class="btn-secondary" id="ddRefillAddBtn" disabled>Aggiungi</button>
+      </div>
+      <div class="refill-total"><span>Totale rabbocchi del giorno</span><span class="val" id="ddRefillTotal">0,00 €</span></div>
       <div class="expected-row" style="margin-top:14px;">
         <label for="ddExpectedInput">Incasso atteso</label>
         <input type="number" id="ddExpectedInput" inputmode="decimal" placeholder="0,00">
@@ -304,6 +338,19 @@
   function dateKey(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function timeKey(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
   function todayKey() { return dateKey(new Date()); }
+  function refillsOf(d) { return (d && Array.isArray(d.refills)) ? d.refills : []; }
+  function sumRefills(arr) {
+    var s = 0;
+    (arr || []).forEach(function (r) { s += Number(r.amount) || 0; });
+    return Math.round(s * 100) / 100;
+  }
+  function parseAmount(str) {
+    var t = String(str).trim();
+    if (!/^\d+([.,]\d{1,2})?$/.test(t)) return null;
+    var v = parseFloat(t.replace(",", "."));
+    if (isNaN(v) || v <= 0) return null;
+    return Math.round(v * 100) / 100;
+  }
 
   // ---------- sync layer ----------
   var dbApi = null;
@@ -335,10 +382,11 @@
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); return true; } catch (e) { return false; }
   }
 
-  async function writeDay(key, entries, expected) {
+  async function writeDay(key, entries, expected, refills) {
+    refills = refills || [];
     if (dbApi) {
       try {
-        await dbApi.collection("days").doc(key).set({ date: key, entries: entries, expected: expected });
+        await dbApi.collection("days").doc(key).set({ date: key, entries: entries, expected: expected, refills: refills });
         return true;
       } catch (e) {
         console.error("db write error", e);
@@ -347,7 +395,7 @@
       }
     } else {
       var all = localLoadAll();
-      all[key] = { date: key, entries: entries, expected: expected };
+      all[key] = { date: key, entries: entries, expected: expected, refills: refills };
       var ok = localSaveAll(all);
       if (key === todayKey()) {
         todayCache = all[key];
@@ -356,8 +404,8 @@
       return ok;
     }
   }
-  function writeToday(entries, expected) {
-    return writeDay(todayKey(), entries, expected);
+  function writeToday(entries, expected, refills) {
+    return writeDay(todayKey(), entries, expected, refills === undefined ? refillsOf(todayCache) : refills);
   }
 
   async function fetchRange(startKey, endKey) {
@@ -387,8 +435,9 @@
 
   function startTodaySync() {
     unsubscribeToday = dbApi.collection("days").doc(todayKey()).onSnapshot(function (snap) {
-      var d = snap.exists ? snap.data() : { entries: [], expected: null };
+      var d = snap.exists ? snap.data() : { entries: [], expected: null, refills: [] };
       if (!d.entries) d.entries = [];
+      if (!d.refills) d.refills = [];
       todayCache = d;
       renderOggiFromCache();
     }, function (err) {
@@ -499,6 +548,27 @@
     updatePrelievoTotal();
   });
 
+  // ---------- RABBOCCO MONETA ----------
+  var refillInput = document.getElementById("refillInput");
+  var refillAddBtn = document.getElementById("refillAddBtn");
+  var refillTodayPill = document.getElementById("refillTodayPill");
+  refillInput.addEventListener("input", function () {
+    refillAddBtn.disabled = parseAmount(refillInput.value) === null;
+  });
+  refillAddBtn.addEventListener("click", async function () {
+    var amount = parseAmount(refillInput.value);
+    if (amount === null) return;
+    refillAddBtn.disabled = true;
+    var r = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7), time: timeKey(new Date()), amount: amount };
+    var newRefills = refillsOf(todayCache).concat([r]);
+    var ok = await writeToday(todayCache.entries || [], todayCache.expected != null ? todayCache.expected : null, newRefills);
+    if (ok) {
+      refillInput.value = "";
+      showToast("Rabbocco registrato — " + fmtCompact(amount) + " (oggi in totale " + fmtCompact(sumRefills(newRefills)) + ")");
+    }
+    refillAddBtn.disabled = parseAmount(refillInput.value) === null;
+  });
+
   // ---------- OGGI ----------
   var dayTotalVal = document.getElementById("dayTotalVal");
   var regBreakdown = document.getElementById("regBreakdown");
@@ -536,6 +606,45 @@
     });
   }
 
+  var refillListEl = document.getElementById("refillList");
+  var refillCountEl = document.getElementById("refillCount");
+  var refillTotalEl = document.getElementById("refillTotal");
+
+  function renderRefillList(container, refills) {
+    container.innerHTML = "";
+    if (refills.length === 0) {
+      container.innerHTML = '<div class="empty">Nessun rabbocco registrato.</div>';
+      return;
+    }
+    refills.slice().reverse().forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "withdrawal";
+      row.innerHTML =
+        '<div class="time">' + r.time + '</div>' +
+        '<div class="breakdown">rabbocco moneta</div>' +
+        '<div class="amount">' + fmtCompact(r.amount) + '</div>' +
+        '<button class="btn-danger" data-id="' + r.id + '">Elimina</button>';
+      container.appendChild(row);
+    });
+  }
+
+  function renderRefillsToday() {
+    var refills = refillsOf(todayCache);
+    var tot = sumRefills(refills);
+    renderRefillList(refillListEl, refills);
+    refillCountEl.textContent = refills.length;
+    refillTotalEl.textContent = fmtCompact(tot);
+    refillTodayPill.textContent = "oggi " + fmtCompact(tot);
+  }
+
+  refillListEl.addEventListener("click", async function (e) {
+    var btn = e.target.closest("button[data-id]");
+    if (!btn) return;
+    var newRefills = refillsOf(todayCache).filter(function (r) { return r.id !== btn.dataset.id; });
+    var ok = await writeToday(todayCache.entries || [], todayCache.expected != null ? todayCache.expected : null, newRefills);
+    if (ok) showToast("Rabbocco eliminato");
+  });
+
   function renderOggiFromCache() {
     var entries = todayCache.entries || [];
     var tempEntries = entries.filter(function (e) { return e.status !== "final"; });
@@ -555,6 +664,7 @@
 
     renderList(withdrawalsTempList, tempEntries, "Nessun prelievo provvisorio.", false);
     renderList(withdrawalsFinalList, finalEntries, "Nessun prelievo definitivo ancora.", true);
+    renderRefillsToday();
 
     if (document.activeElement !== expectedInput) {
       expectedInput.value = todayCache.expected != null ? todayCache.expected : "";
@@ -636,7 +746,7 @@
     var periodLabel = document.getElementById("periodLabel");
     var histList = document.getElementById("histList");
     var rows = [];
-    var sumCounted = 0, sumExpected = 0, anyExpected = false;
+    var sumCounted = 0, sumExpected = 0, anyExpected = false, sumRefill = 0;
 
     if (granularity === "week") {
       var base = addDays(startOfWeek(now), periodOffset * 7);
@@ -649,9 +759,11 @@
         var dayObj = map[key];
         var c = dayObj ? (dayObj.entries || []).reduce(function (s, e) { return s + e.total; }, 0) : 0;
         var exp = dayObj && dayObj.expected != null ? dayObj.expected : null;
+        var rf = sumRefills(refillsOf(dayObj));
         sumCounted += c;
+        sumRefill += rf;
         if (exp != null) { sumExpected += exp; anyExpected = true; }
-        rows.push({ label: ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"][i] + " " + d.getDate(), counted: c, expected: exp, key: key });
+        rows.push({ label: ["Lun","Mar","Mer","Gio","Ven","Sab","Dom"][i] + " " + d.getDate(), counted: c, expected: exp, refill: rf, key: key });
       }
     } else if (granularity === "month") {
       var m = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), periodOffset);
@@ -668,9 +780,11 @@
         if (!daym) continue;
         var cm = (daym.entries || []).reduce(function (s, e) { return s + e.total; }, 0);
         var expm = daym.expected != null ? daym.expected : null;
+        var rfm = sumRefills(refillsOf(daym));
         sumCounted += cm;
+        sumRefill += rfm;
         if (expm != null) { sumExpected += expm; anyExpected = true; }
-        rows.push({ label: dd + " " + MESI[dm.getMonth()], counted: cm, expected: expm, key: keym });
+        rows.push({ label: dd + " " + MESI[dm.getMonth()], counted: cm, expected: expm, refill: rfm, key: keym });
       }
     } else {
       var y = now.getFullYear() + periodOffset;
@@ -678,7 +792,7 @@
       var yStart = new Date(y, 0, 1), yEnd = new Date(y, 11, 31);
       var mapY = await fetchRange(dateKey(yStart), dateKey(yEnd));
       for (var mo = 0; mo < 12; mo++) {
-        var mCounted = 0, mExpected = 0, mAny = false;
+        var mCounted = 0, mExpected = 0, mAny = false, mRefill = 0;
         var dim = new Date(y, mo + 1, 0).getDate();
         for (var day2 = 1; day2 <= dim; day2++) {
           var dObj = new Date(y, mo, day2);
@@ -687,17 +801,23 @@
           if (!dd2) continue;
           mCounted += (dd2.entries || []).reduce(function (s, e) { return s + e.total; }, 0);
           if (dd2.expected != null) { mExpected += dd2.expected; mAny = true; }
+          mRefill += sumRefills(refillsOf(dd2));
         }
-        if (mCounted === 0 && !mAny) continue;
+        mRefill = Math.round(mRefill * 100) / 100;
+        if (mCounted === 0 && !mAny && mRefill === 0) continue;
         sumCounted += mCounted;
+        sumRefill += mRefill;
         if (mAny) { sumExpected += mExpected; anyExpected = true; }
-        rows.push({ label: MESI_LONG[mo], counted: mCounted, expected: mAny ? mExpected : null });
+        rows.push({ label: MESI_LONG[mo], counted: mCounted, expected: mAny ? mExpected : null, refill: mRefill });
       }
     }
 
     document.getElementById("sumCounted").textContent = fmtCompact(sumCounted);
     document.getElementById("sumExpected").textContent = anyExpected ? fmtCompact(sumExpected) : "—";
     document.getElementById("sumDelta").textContent = anyExpected ? fmtCompact(sumCounted - sumExpected) : "—";
+    sumRefill = Math.round(sumRefill * 100) / 100;
+    document.getElementById("sumRefillLine").style.display = sumRefill > 0 ? "flex" : "none";
+    document.getElementById("sumRefill").textContent = fmtCompact(sumRefill);
 
     histList.innerHTML = "";
     if (!rows || rows.length === 0) {
@@ -713,7 +833,7 @@
         ? '<div class="bar-track"><div class="bar-fill expected" style="width:' + (r.expected / maxVal * 100) + '%"></div></div>'
         : "";
       el.innerHTML =
-        '<div class="top-line"><span class="name">' + r.label + '</span><span class="amt">' + fmtCompact(r.counted) + (r.expected != null ? ' <span style="color:var(--ink-soft);font-weight:400;">/ ' + fmtCompact(r.expected) + '</span>' : '') + '</span></div>' +
+        '<div class="top-line"><span class="name">' + r.label + (r.refill > 0 ? '<span class="refill-tag">+' + fmtCompact(r.refill) + ' monete</span>' : '') + '</span><span class="amt">' + fmtCompact(r.counted) + (r.expected != null ? ' <span style="color:var(--ink-soft);font-weight:400;">/ ' + fmtCompact(r.expected) + '</span>' : '') + '</span></div>' +
         '<div class="bars"><div class="bar-track"><div class="bar-fill counted" style="width:' + (r.counted / maxVal * 100) + '%"></div></div>' + expLine + '</div>';
       histList.appendChild(el);
     });
@@ -725,7 +845,7 @@
 
   // ---------- day detail (correzioni su giorni passati) ----------
   var dayDetailKey = null;
-  var dayDetailData = { entries: [], expected: null };
+  var dayDetailData = { entries: [], expected: null, refills: [] };
   var ddModal = document.getElementById("dayModalBackdrop");
   var ddTitle = document.getElementById("ddTitle");
   var ddTotal = document.getElementById("ddTotal");
@@ -737,6 +857,11 @@
   var ddFinalizeBtn = document.getElementById("ddFinalizeBtn");
   var ddExpectedInput = document.getElementById("ddExpectedInput");
   var ddDeltaBox = document.getElementById("ddDeltaBox");
+  var ddRefillListEl = document.getElementById("ddRefillList");
+  var ddRefillCountEl = document.getElementById("ddRefillCount");
+  var ddRefillTotalEl = document.getElementById("ddRefillTotal");
+  var ddRefillInput = document.getElementById("ddRefillInput");
+  var ddRefillAddBtn = document.getElementById("ddRefillAddBtn");
 
   var ddCounts = {};
   DENOMS.forEach(function (d) { ddCounts[d.v] = 0; });
@@ -811,6 +936,9 @@
     var map = await fetchRange(key, key);
     dayDetailData = map[key] || { entries: [], expected: null };
     if (!dayDetailData.entries) dayDetailData.entries = [];
+    if (!dayDetailData.refills) dayDetailData.refills = [];
+    ddRefillInput.value = "";
+    ddRefillAddBtn.disabled = true;
     renderDayDetail();
     ddModal.classList.add("show");
   }
@@ -838,6 +966,11 @@
     renderList(ddTempList, tempEntries, "Nessun prelievo provvisorio.", false);
     renderList(ddFinalList, finalEntries, "Nessun prelievo definitivo.", true);
 
+    var drefs = dayDetailData.refills || [];
+    renderRefillList(ddRefillListEl, drefs);
+    ddRefillCountEl.textContent = drefs.length;
+    ddRefillTotalEl.textContent = fmtCompact(sumRefills(drefs));
+
     if (document.activeElement !== ddExpectedInput) {
       ddExpectedInput.value = dayDetailData.expected != null ? dayDetailData.expected : "";
     }
@@ -852,7 +985,7 @@
   }
 
   async function ddPersist() {
-    var ok = await writeDay(dayDetailKey, dayDetailData.entries, dayDetailData.expected);
+    var ok = await writeDay(dayDetailKey, dayDetailData.entries, dayDetailData.expected, dayDetailData.refills);
     if (ok) { renderDayDetail(); renderStorico(); }
     return ok;
   }
@@ -882,6 +1015,29 @@
     var val = parseFloat(ddExpectedInput.value);
     dayDetailData.expected = isNaN(val) ? null : val;
     ddPersist();
+  });
+
+  ddRefillInput.addEventListener("input", function () {
+    ddRefillAddBtn.disabled = parseAmount(ddRefillInput.value) === null;
+  });
+  ddRefillAddBtn.addEventListener("click", async function () {
+    var amount = parseAmount(ddRefillInput.value);
+    if (amount === null) return;
+    ddRefillAddBtn.disabled = true;
+    var r = { id: Date.now() + "-" + Math.random().toString(36).slice(2, 7), time: timeKey(new Date()), amount: amount };
+    dayDetailData.refills = (dayDetailData.refills || []).concat([r]);
+    var ok = await ddPersist();
+    if (ok) {
+      ddRefillInput.value = "";
+      showToast("Rabbocco aggiunto — " + fmtCompact(amount));
+    }
+    ddRefillAddBtn.disabled = parseAmount(ddRefillInput.value) === null;
+  });
+  ddRefillListEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-id]");
+    if (!btn) return;
+    dayDetailData.refills = (dayDetailData.refills || []).filter(function (r) { return r.id !== btn.dataset.id; });
+    ddPersist().then(function (ok) { if (ok) showToast("Rabbocco eliminato"); });
   });
 
   // ---------- backup ----------
