@@ -105,6 +105,7 @@
   .refill-add { display: flex; gap: 8px; margin-top: 10px; }
   .refill-add input { flex: 1; min-width: 0; font-family: var(--font-num); font-size: 15px; padding: 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); text-align: right; }
   .refill-add button:disabled { opacity: 0.45; }
+  nav.tabs button.tab-icon { flex: 0 0 42px; font-size: 17px; line-height: 1; padding: 6px 0; }
   .withdrawal { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line); gap: 10px; }
   .withdrawal:last-child { border-bottom: none; }
   .withdrawal .time { font-family: var(--font-num); font-size: 13px; color: var(--ink-soft); width: 46px; }
@@ -140,7 +141,7 @@
   .bar-fill.expected { background: var(--ink-soft); opacity: 0.5; }
   .settings-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-soft); font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; padding: 8px 12px; border-radius: 10px; cursor: pointer; }
   .row-flex { display: flex; gap: 8px; flex-wrap: wrap; }
-  .toast { position: fixed; bottom: calc(100px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%) translateY(10px); background: var(--ink); color: var(--surface); font-size: 13px; font-weight: 600; padding: 10px 16px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; max-width: 88vw; text-align: center; z-index: 20; }
+  .toast { position: fixed; bottom: calc(100px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%) translateY(10px); background: var(--ink); color: var(--surface); font-size: 13px; font-weight: 600; padding: 10px 16px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; max-width: 88vw; text-align: center; z-index: 40; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   h2.section-title { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); margin: 4px 0 8px; }
   .note-small { font-size: 11.5px; color: var(--ink-soft); margin-top: 8px; line-height: 1.5; }
@@ -183,6 +184,7 @@
     <button data-view="prelievo" class="active">Prelievo</button>
     <button data-view="oggi">Oggi</button>
     <button data-view="storico">Storico</button>
+    <button class="tab-icon" id="settingsBtn" aria-label="Impostazioni" title="Impostazioni">⚙︎</button>
   </nav>
 </header>
 
@@ -216,6 +218,7 @@
       </div>
       <div id="withdrawalsTempList"></div>
       <button class="btn-primary" id="finalizeBtn" style="margin-top:12px;" disabled>Registra tutto in modo definitivo</button>
+      <div class="note-small">Alle <span id="autoFinLabel">23:00</span> i prelievi provvisori diventano definitivi in automatico (se l'app è aperta; altrimenti alla prima apertura successiva).</div>
     </div>
     <div class="card">
       <div class="section-head">
@@ -307,6 +310,22 @@
         <input type="number" id="ddExpectedInput" inputmode="decimal" placeholder="0,00">
       </div>
       <div id="ddDeltaBox"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="settingsModalBackdrop">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div class="modal-title">Impostazioni</div>
+        <button class="modal-close" id="settingsClose">✕</button>
+      </div>
+      <div class="section-head" style="margin-top:10px;"><h2 class="section-title" style="margin:0;">Chiusura automatica</h2></div>
+      <div class="expected-row">
+        <label for="autoTimeInput">Registra in modo definitivo alle</label>
+        <input type="time" id="autoTimeInput" value="23:00">
+      </div>
+      <div class="note-small">Da quest'ora in poi i prelievi provvisori della giornata diventano definitivi da soli. Se l'app è chiusa, succede alla prima apertura successiva. Se scegli un orario già passato, i provvisori di oggi vengono chiusi subito. Dopo la chiusura puoi sempre correggere o eliminare un prelievo dallo Storico.</div>
+      <div class="note-small">L'impostazione vale per questo telefono.</div>
     </div>
   </div>
 
@@ -476,7 +495,7 @@
   }
 
   // ---------- tabs ----------
-  var tabButtons = document.querySelectorAll("nav.tabs button");
+  var tabButtons = document.querySelectorAll("nav.tabs button[data-view]");
   var views = document.querySelectorAll(".view");
   var prelievoBar = document.getElementById("prelievoBar");
   function switchView(name) {
@@ -1109,10 +1128,105 @@
     importFile.value = "";
   });
 
+  // ---------- chiusura automatica alle 23:00 ----------
+  var SETTINGS_KEY = "orsetto_conta_banconote_settings";
+  var DEFAULT_AUTO_TIME = "23:00";
+  var TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  function loadSettings() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+      return (s && typeof s === "object") ? s : {};
+    } catch (e) { return {}; }
+  }
+  function saveSettings(s) {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); return true; } catch (e) { return false; }
+  }
+  function getAutoTime() {
+    var t = loadSettings().autoFinalTime;
+    return TIME_RE.test(t || "") ? t : DEFAULT_AUTO_TIME;
+  }
+  function autoTimeMinutes() {
+    var p = getAutoTime().split(":");
+    return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+  }
+  function updateAutoLabel() {
+    document.getElementById("autoFinLabel").textContent = getAutoTime();
+  }
+  var AUTO_FIN_KEY = "orsetto_conta_banconote_autofinal_done";
+  var autoFinBusy = false;
+
+  async function autoFinalizeDue() {
+    if (autoFinBusy || dayDetailKey !== null) return;
+    autoFinBusy = true;
+    try {
+      var now = new Date();
+      var tk = todayKey();
+      var afterCutoff = (now.getHours() * 60 + now.getMinutes()) >= autoTimeMinutes();
+      var doneToday = false;
+      try { doneToday = localStorage.getItem(AUTO_FIN_KEY) === tk; } catch (e) {}
+      var all = dbApi ? await fetchRange("0000-01-01", "9999-12-31") : localLoadAll();
+      var keys = Object.keys(all).sort();
+      var closed = [];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var day = all[k] || {};
+        var entries = day.entries || [];
+        var hasTemp = entries.some(function (e) { return e.status !== "final"; });
+        if (!hasTemp) continue;
+        var due = k < tk || (k === tk && afterCutoff && !doneToday);
+        if (!due) continue;
+        var finalEntries = entries.map(function (e) {
+          return e.status === "final" ? e : Object.assign({}, e, { status: "final" });
+        });
+        var ok = await writeDay(k, finalEntries, day.expected != null ? day.expected : null, refillsOf(day));
+        if (ok) closed.push(k);
+      }
+      if (afterCutoff && !doneToday) { try { localStorage.setItem(AUTO_FIN_KEY, tk); } catch (e) {} }
+      if (closed.length) {
+        renderOggiFromCache();
+        if (document.getElementById("view-storico").classList.contains("active")) renderStorico();
+        showToast(closed.length === 1
+          ? "Chiusura automatica: prelievi di " + formatDayTitle(closed[0]) + " registrati definitivamente"
+          : "Chiusura automatica: prelievi di " + closed.length + " giorni registrati definitivamente");
+      }
+    } catch (e) {
+      console.error("auto-finalize error", e);
+    } finally {
+      autoFinBusy = false;
+    }
+  }
+  var settingsModal = document.getElementById("settingsModalBackdrop");
+  var autoTimeInput = document.getElementById("autoTimeInput");
+  document.getElementById("settingsBtn").addEventListener("click", function () {
+    autoTimeInput.value = getAutoTime();
+    settingsModal.classList.add("show");
+  });
+  function closeSettings() { settingsModal.classList.remove("show"); }
+  document.getElementById("settingsClose").addEventListener("click", closeSettings);
+  settingsModal.addEventListener("click", function (e) { if (e.target === settingsModal) closeSettings(); });
+  autoTimeInput.addEventListener("change", function () {
+    var v = autoTimeInput.value;
+    if (!TIME_RE.test(v)) {
+      autoTimeInput.value = getAutoTime();
+      showToast("Orario non valido");
+      return;
+    }
+    var s = loadSettings();
+    s.autoFinalTime = v;
+    if (!saveSettings(s)) { showToast("Impossibile salvare l'impostazione"); return; }
+    updateAutoLabel();
+    showToast("Chiusura automatica alle " + v);
+    autoFinalizeDue();
+  });
+
+  setInterval(autoFinalizeDue, 30000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) autoFinalizeDue(); });
+
   // ---------- init ----------
   document.getElementById("todayLabel").textContent = new Date().toLocaleDateString("it-IT", { weekday: "short", day: "numeric", month: "short" });
   updatePrelievoTotal();
-  initSync();
+  updateAutoLabel();
+  initSync().then(function () { autoFinalizeDue(); });
 })();
 </script>
 </body>
